@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package pitracing.telemetry.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Agente -> ingest. Un stream por sesión de manejo.
+// El token del agente viaja en la metadata de gRPC ("authorization"), no en los mensajes.
+service IngestService {
+  rpc Stream(stream StreamRequest) returns (stream StreamResponse);
+}
+
+message StreamRequest {
+  oneof payload {
+    // Primer mensaje del stream: describe la sesión.
+    SessionStart session_start = 1;
+    // Todos los demás: lotes de 100 ms.
+    SampleBatch batch = 2;
+  }
+}
+
+message StreamResponse {
+  // Último seq persistido en Kafka; el agente puede borrar de su buffer en disco todo lo <= acked_seq.
+  uint64 acked_seq = 1;
+}
+
+enum Simulator {
+  SIMULATOR_UNSPECIFIED = 0;
+  SIMULATOR_IRACING = 1;
+}
+
+message SessionStart {
+  string agent_id = 1;
+  // UUIDv7 generado por el agente al iniciar la sesión (ordenable por tiempo).
+  string session_id = 2;
+  Simulator simulator = 3;
+  string track_id = 4;
+  string car_id = 5;
+  google.protobuf.Timestamp started_at = 6;
+}
+
+message SampleBatch {
+  string agent_id = 1;
+  string session_id = 2;
+  // Monótono por sesión, empieza en 1. Deduplicación: agent_id + session_id + seq.
+  uint64 seq = 3;
+  repeated Sample samples = 4;
+  // Cuándo salió el lote del agente: permite medir la latencia de punta a punta (SLO p99 < 500 ms).
+  google.protobuf.Timestamp sent_at = 5;
+}
+
+message Sample {
+  // Segundos desde que inició la sesión en el simulador.
+  double session_time = 1;
+  float speed = 2;        // m/s
+  float rpm = 3;
+  int32 gear = 4;         // -1 reversa, 0 neutral
+  float throttle = 5;     // 0..1
+  float brake = 6;        // 0..1
+  float steering = 7;     // radianes
+  float lap_dist_pct = 8; // 0..1, posición dentro de la vuelta
+  int32 lap = 9;
+}
